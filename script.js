@@ -42,6 +42,83 @@ async function loadProducts() {
   }
 }
 
+/* Function to fetch API information from the Cloudflare Worker endpoint */
+async function fetchAPIInfo() {
+  try {
+    // Show loading message in console for debugging
+    console.log("Fetching API information...");
+
+    // Make a request to the Cloudflare Worker API endpoint
+    const response = await fetch(
+      "https://fragrant-snowflake-0588.whatsupajay25.workers.dev/"
+    );
+
+    // Check if the request was successful
+    if (!response.ok) {
+      throw new Error(
+        `API request failed: ${response.status} ${response.statusText}`
+      );
+    }
+
+    // Get the JSON data from the response
+    const apiData = await response.json();
+
+    // Log the API information to console for debugging
+    console.log("API Information received:", apiData);
+
+    // Return the data so other functions can use it
+    return apiData;
+  } catch (error) {
+    // Log any errors that occur
+    console.error("Error fetching API information:", error);
+
+    // Return null if there was an error
+    return null;
+  }
+}
+
+/* Function to display API information in the chat */
+async function showAPIInfo() {
+  // Add user message to chat
+  addMessageToChat("user", "Show API information");
+
+  // Add loading message
+  addMessageToChat("assistant", "Fetching API information...");
+
+  // Fetch the API data
+  const apiInfo = await fetchAPIInfo();
+
+  // Remove loading message
+  const messages = document.querySelectorAll(".assistant-message");
+  const lastMessage = messages[messages.length - 1];
+  if (
+    lastMessage &&
+    lastMessage.textContent.includes("Fetching API information...")
+  ) {
+    lastMessage.remove();
+  }
+
+  // Check if we got data
+  if (apiInfo) {
+    // Format the API information for display
+    let infoMessage = "📡 **API Information:**\n\n";
+
+    // Loop through all the properties in the API response
+    for (const [key, value] of Object.entries(apiInfo)) {
+      infoMessage += `**${key}:** ${value}\n`;
+    }
+
+    // Add the API info to chat
+    addMessageToChat("assistant", infoMessage);
+  } else {
+    // Show error message if API fetch failed
+    addMessageToChat(
+      "assistant",
+      "Sorry, I couldn't fetch the API information right now. Please try again later."
+    );
+  }
+}
+
 /* Function to create and display product cards as clickable buttons */
 function displayProducts(productsToShow) {
   // Clear the container first
@@ -189,32 +266,36 @@ function updateProductCardStyles() {
   });
 }
 
-/* Function to call OpenAI API for chatbot responses */
+/* Function to call OpenAI API with enhanced API information */
 async function callOpenAI(userMessage) {
   try {
-    // Check if the API key is available
+    // Check if the OpenAI API key is available
     if (typeof OPENAI_API_KEY === "undefined") {
       throw new Error(
         "OpenAI API key not found. Make sure secrets.js is loaded."
       );
     }
 
-    // Create strict context to keep chatbot focused on L'Oréal and selected products
+    // Fetch additional API information from Cloudflare Worker
+    const apiInfo = await fetchAPIInfo();
+
+    // Create enhanced system message with API information
     let systemMessage = `You are a specialized L'Oréal beauty advisor chatbot. You ONLY answer questions about:
 - L'Oréal products and brands (L'Oréal Paris, Maybelline, Garnier, etc.)
 - Beauty, skincare, haircare, and makeup advice
 - The specific products the user has selected
 - How to use L'Oréal products together in routines
 
-If someone asks about anything else (politics, sports, other brands, general topics), politely redirect them back to L'Oréal beauty topics.
+If someone asks about anything else, politely redirect them back to L'Oréal beauty topics.`;
 
-IMPORTANT RULES:
-- Only discuss L'Oréal family brands and beauty topics
-- If asked about competitors or other brands, redirect to L'Oréal alternatives
-- If asked non-beauty questions, say "I'm here to help with L'Oréal beauty advice only"
-- Always be helpful and friendly about beauty topics
-- Keep responses under 200 words`;
+    // Add API information to the system message if available
+    if (apiInfo) {
+      systemMessage += `\n\nAdditional API Information: ${JSON.stringify(
+        apiInfo
+      )}`;
+    }
 
+    // Add selected products information
     if (selectedProducts.length > 0) {
       const productInfo = selectedProducts
         .map(
@@ -223,13 +304,10 @@ IMPORTANT RULES:
         )
         .join(", ");
 
-      systemMessage += `\n\nThe user has currently selected these L'Oréal products: ${productInfo}. 
-Focus especially on these products when giving advice.`;
-    } else {
-      systemMessage += `\n\nThe user hasn't selected any products yet. Encourage them to select L'Oréal products from the categories above to get personalized advice.`;
+      systemMessage += `\n\nThe user has currently selected these L'Oréal products: ${productInfo}. Focus especially on these products when giving advice.`;
     }
 
-    // Make API request to OpenAI using gpt-4o model
+    // Make request to OpenAI API using gpt-4o model
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -262,15 +340,15 @@ Focus especially on these products when giving advice.`;
 
     const data = await response.json();
 
-    // Check if we got a valid response from OpenAI
+    // Check for valid response from OpenAI
     if (data.choices && data.choices[0] && data.choices[0].message.content) {
       return data.choices[0].message.content;
     } else {
       throw new Error("No valid response from OpenAI");
     }
   } catch (error) {
-    console.error("Error calling OpenAI API:", error);
-    return "Sorry, I'm having trouble connecting right now. Please try again later. I'm here to help with L'Oréal beauty advice!";
+    console.error("Error calling OpenAI API with API info:", error);
+    return "Sorry, I'm having trouble connecting right now. Please try again later.";
   }
 }
 
@@ -314,7 +392,7 @@ categoryFilter.addEventListener("change", (e) => {
   displayProducts(filteredProducts);
 });
 
-/* Event listener for generate routine button - ENHANCED VERSION */
+/* Event listener for generate routine button */
 generateBtn.addEventListener("click", async () => {
   if (selectedProducts.length === 0) {
     alert("Please select at least one L'Oréal product to generate a routine.");
@@ -377,7 +455,7 @@ Focus ONLY on the selected L'Oréal products. Make it beginner-friendly and spec
   );
 });
 
-/* Chat form submission handler */
+/* Chat form submission handler with API integration */
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
 
@@ -385,6 +463,16 @@ chatForm.addEventListener("submit", async (e) => {
   const message = userInput.value.trim();
 
   if (message === "") return;
+
+  // Check if user is asking for API information
+  if (
+    message.toLowerCase().includes("api info") ||
+    message.toLowerCase().includes("api information")
+  ) {
+    userInput.value = "";
+    await showAPIInfo();
+    return;
+  }
 
   // Add user message to chat
   addMessageToChat("user", message);
@@ -395,7 +483,7 @@ chatForm.addEventListener("submit", async (e) => {
   // Add loading message
   addMessageToChat("assistant", "Thinking...");
 
-  // Call OpenAI API for chat response
+  // Call OpenAI API with enhanced API information
   const aiResponse = await callOpenAI(message);
 
   // Remove loading message
@@ -414,13 +502,23 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Load products from JSON file first
   await loadProducts();
 
+  // Fetch API information on startup
+  const apiInfo = await fetchAPIInfo();
+  if (apiInfo) {
+    console.log("API successfully connected on startup");
+  }
+
   // Initialize selected products display
   updateSelectedProductsDisplay();
 
-  // Show initial chat message
+  // Show initial chat message with API info option
   chatWindow.innerHTML = `
     <div class="placeholder-message">
       👋 Hi! I'm your L'Oréal beauty advisor. Select products from the categories above, and I'll help you create the perfect routine!
+      <br><br>
+      💡 Type "API info" to see additional information from our API.
+      <br><br>
+      🧴 Click "Generate Routine" after selecting products for a personalized plan!
     </div>
   `;
 });
